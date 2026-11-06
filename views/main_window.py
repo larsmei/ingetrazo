@@ -7587,12 +7587,20 @@ class MainWindow(QMainWindow):
         self._import_glb_path(Path(path_str))
 
     def _import_glb_path(self, path: Path) -> None:
-        from formats import glb as glb_format
+        from formats import glb_fast
         dlg, cb = self._import_progress(tr("Importing {name}…", name=path.name))
+        # Parsing and the array/weld build touch no scene, so they run off
+        # the UI thread the same way a big .skp does. Applying the groups
+        # stays here, inside the undo step.
+        payload, exc = self._parse_glb_threaded(path, cb)
+        if exc is not None:
+            dlg.close()
+            QMessageBox.critical(self, tr("Import glTF/GLB failed"), str(exc))
+            return
         moved: dict = {}
 
         def load(scene):
-            moved["offset"] = glb_format.load_glb(scene, path, progress=cb)
+            moved["offset"] = glb_fast.apply_glb(scene, payload)
 
         cmd = SnapshotImport(load)
         try:
@@ -7607,6 +7615,50 @@ class MainWindow(QMainWindow):
         self._import_name = path.name
         self._update_title()
         self._report_import(path.name, moved.get("offset"))
+
+    def _parse_glb_threaded(self, path, cb):
+        """:func:`formats.glb_fast.prepare_glb` on a worker. ``(payload, exc)``."""
+        from PySide6.QtCore import QEventLoop, QObject, QThread, Qt, Signal
+        from formats import glb_fast
+
+        class _Worker(QObject):
+            progressed = Signal(float, str)
+            finished = Signal(object, object)
+
+            def run(self):
+                try:
+                    payload = glb_fast.prepare_glb(
+                        path, progress=lambda f, t: self.progressed.emit(f, t))
+                    self.finished.emit(payload, None)
+                except Exception as exc:  # noqa: BLE001 — reported to caller
+                    self.finished.emit(None, exc)
+
+        thread = QThread(self)
+        worker = _Worker()
+        worker.moveToThread(thread)
+        result = {}
+        loop = QEventLoop()
+
+        class _Relay(QObject):
+            def on_progress(self, fraction, text):
+                cb(fraction, text)
+
+            def on_finished(self, payload, exc):
+                result["payload"] = payload
+                result["exc"] = exc
+                loop.quit()
+
+        relay = _Relay(self)
+        worker.progressed.connect(relay.on_progress, Qt.QueuedConnection)
+        worker.finished.connect(relay.on_finished, Qt.QueuedConnection)
+        thread.started.connect(worker.run)
+        thread.start()
+        loop.exec()
+        thread.quit()
+        thread.wait()
+        worker.deleteLater()
+        relay.deleteLater()
+        return result.get("payload"), result.get("exc")
 
     def _import_dae_path(self, path: Path) -> None:
         dlg, cb = self._import_progress(tr("Importing {name}…", name=path.name))

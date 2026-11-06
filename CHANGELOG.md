@@ -4,6 +4,18 @@ All notable changes to IngeTrazo are documented here.
 Format inspired by [Keep a Changelog](https://keepachangelog.com); versions
 follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Cambiado
+
+- **Los GLB grandes se pueden orbitar.** Por encima de 20 000 triángulos
+  el archivo ya no se convierte en una cara de Python por triángulo: las
+  mallas glTF repetidas siguen siendo instancias de componente, y un
+  prototipo más denso se dibuja desde arrays (solo pliegues y bordes; las
+  costuras coplanares no entran en el imán). El análisis corre fuera del
+  hilo de la interfaz. Al guardar en .igz se construye una copia editable
+  simplificada. Los archivos por debajo del umbral se importan como antes.
+
 ## [0.6.0] — 2026-11-01
 
 **Varios proyectos en pestañas en la misma ventana; IngeTrazo ya habla 17

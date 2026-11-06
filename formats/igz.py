@@ -609,6 +609,11 @@ def save_scene(scene, path: Path) -> dict:
     """Write ``scene`` to ``path``. Returns ``{"embedded", "missing"}``: how
     many texture images were packed into the document, and how many could not
     be read (those keep pointing at their original path)."""
+    # A dense GLB import draws from arrays. The document stores faces, so
+    # those arrays are promoted (clustered, coplanar-merged) once, here.
+    if hasattr(scene, "groups"):
+        from core.reference_mesh import promote_scene
+        promote_scene(scene)
     # Accept a Scene or a bare Mesh (the M1 read-compat path feeds a Mesh).
     mesh = scene.mesh if hasattr(scene, "mesh") else scene
     # Decided BEFORE anything is serialized: a large document writes its

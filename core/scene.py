@@ -898,15 +898,22 @@ class Scene:
             key = id(g.mesh)
             arr = per_mesh.get(key)
             if arr is None:
-                plan = plan_of(g.mesh)      # a lazy mesh: no build
-                if plan is not None:
-                    arr = plan.pos
+                ref = g.mesh.__dict__.get("_reference")
+                if ref is not None and not g.mesh.vertices:
+                    # Display arrays of a dense import: the box is the
+                    # positions, and asking for vertices would be empty.
+                    arr = np.ascontiguousarray(ref.positions, dtype=np.float64)
                     per_mesh[key] = (arr, True)
                 else:
-                    arr = np.array(
-                        [[v.position.x(), v.position.y(), v.position.z()]
-                         for v in g.mesh.vertices])
-                    per_mesh[key] = (arr, False)
+                    plan = plan_of(g.mesh)      # a lazy mesh: no build
+                    if plan is not None:
+                        arr = plan.pos
+                        per_mesh[key] = (arr, True)
+                    else:
+                        arr = np.array(
+                            [[v.position.x(), v.position.y(), v.position.z()]
+                             for v in g.mesh.vertices])
+                        per_mesh[key] = (arr, False)
                 lazy = per_mesh[key][1]
             else:
                 arr, lazy = arr

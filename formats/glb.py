@@ -3,11 +3,14 @@
 """glTF 2.0 / GLB import — Sketchfab's universal download format.
 
 Reads a binary ``.glb`` (or JSON ``.gltf`` with an external ``.bin``) and
-adds its geometry to the scene as a *reference* Group, the same structure
-the big-DAE path builds: triangles bulk-welded in world Z-up metres,
-textures extracted to the app texture cache and mapped through per-triangle
-world→UV affine maps (exact for triangles), facet seams softened so
-smooth-shaded models read smooth. Stdlib + NumPy only.
+adds its geometry to the scene. Small files are one bulk-welded reference
+Group, as before. Past ``formats.glb_fast.REFERENCE_TRIANGLES`` expanded
+triangles, shared glTF meshes stay component instances and a prototype that
+is itself over the cap is drawn from arrays (no Python face per triangle)
+until it is promoted. Textures are extracted to the app texture cache and
+mapped through per-triangle world→UV affine maps (exact for triangles);
+facet seams are softened on the eager path so smooth-shaded models read
+smooth. Stdlib + NumPy only.
 
 Supported: TRIANGLES primitives, u8/u16/u32 indices, float/normalized-int
 attributes with byteStride, node hierarchies (matrix or TRS), embedded and
@@ -420,15 +423,21 @@ def _hide_cutout_card_edges(mesh) -> None:
 
 
 def load_glb(scene, path, progress=None):
-    """Add the glTF/GLB at ``path`` to ``scene`` as a reference Group named
-    after the file (or the embedded Sketchfab title). GC off during the
-    bulk build, like every mass import. Returns the survey offset the file
-    was moved by (formats/recenter.py), or ``None``."""
+    """Add the glTF/GLB at ``path`` to ``scene``.
+
+    Small files are one welded group, as before. Past
+    :data:`formats.glb_fast.REFERENCE_TRIANGLES` expanded triangles, shared
+    glTF meshes become component instances, and a prototype that is itself
+    past the cap stays an array reference (no Python face per triangle)
+    until :func:`core.reference_mesh.promote_mesh`. Returns the survey
+    offset the file was moved by, or ``None``.
+    """
     import gc
+    from formats import glb_fast
     was = gc.isenabled()
     gc.disable()
     try:
-        return _load_glb_inner(scene, path, progress=progress)
+        return glb_fast.load_into(scene, path, progress=progress)
     finally:
         if was:
             gc.enable()

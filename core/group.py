@@ -537,11 +537,20 @@ def transformed_mesh(src: Mesh, m) -> Mesh:
     """A DEEP copy of ``src`` with every position mapped through ``m``,
     carrying face attrs, soft/curve flags and re-fitted texture UV maps.
 
+    A dense import stores its triangles on ``_reference`` and has no faces
+    yet. Copying those arrays (mapped) keeps the reference a reference —
+    entering the group must not turn it into an empty mesh.
+
     Big meshes go through one vectorized ``bulk_weld`` pass (same recipe as
     the ``.igz`` loader): the per-entity ``add_face``/``add_edge`` walk froze
     the UI for ~16 s copying a 17k-face plant group (piscina report) — and
     ran TWICE, once at copy and once per paste stamp. Small meshes keep the
     plain walk (the bulk pass's fixed cost loses there)."""
+    ref = src.__dict__.get("_reference")
+    if ref is not None and not src.faces and not src.edges:
+        new = Mesh()
+        new.__dict__["_reference"] = ref.transformed(m)
+        return new
     if len(src.edges) * 2 + len(src.faces) * 4 < 1024:
         return _transformed_mesh_walk(src, m)
     import numpy as np

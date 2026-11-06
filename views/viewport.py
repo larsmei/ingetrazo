@@ -271,6 +271,10 @@ SHADER_DIR = app_root() / "resources" / "shaders"
 #: ~a dozen times per hover, and an exploded medium import (9k faces =
 #: ~20k edges) froze every mouse move (user report, piscina.igz).
 _LOOSE_SNAP_CAP = 3000
+#: A dense import draws every hard edge, and a triangulated wall is almost
+#: entirely coplanar seams. Past this many edges those seams are left out of
+#: the line pass and out of inference; creases and borders stay.
+_DENSE_HARD_EDGES = 80_000
 
 
 def _split_chunk_spans(chunk, depth=0, force=False):
@@ -12160,6 +12164,18 @@ class Viewport(QOpenGLWidget):
         from core.materials import effective_attrs, material_sig
         paint = _paint_of(self, group)
         msig = material_sig(paint)
+        ref = mesh.__dict__.get("_reference")
+        if ref is not None and not mesh.faces and not mesh.edges:
+            # Dense import: triangles live in arrays. Building a Face per
+            # triangle is what made orbiting and hovering stall.
+            if (entry is not None and entry.get("reference") is ref
+                    and entry.get("msig") == msig):
+                entry["vkey"] = vkey
+                return entry
+            from core.reference_mesh import chunk_for
+            entry = chunk_for(self, ref, mesh, msig, vkey, next(_chunk_uid))
+            cache[id(group)] = entry
+            return entry
         if entry is not None and entry.get("msig") != msig:
             entry = None
         # The entry answers for ONE mesh object. Explode hands every lifted
@@ -12406,10 +12422,20 @@ class Viewport(QOpenGLWidget):
                                      (c.x(), c.y(), c.z()))
             return r
 
+        dense = len(mesh.edges) > _DENSE_HARD_EDGES
         for e in mesh.edges:
             if getattr(e, "hidden", False):
                 continue                  # invisible: no line, no profile
             if not getattr(e, "soft", False):
+                if dense and len(e.faces) >= 2:
+                    n0 = fprops.get(id(e.faces[0]))
+                    n1 = fprops.get(id(e.faces[1])) if len(e.faces) > 1 else None
+                    # A triangulated GLB's interior seams are coplanar. They
+                    # are not a crease, and drawing or snapping them is most
+                    # of the cost of orbiting the import.
+                    if (n0 is not None and n1 is not None
+                            and abs(QVector3D.dotProduct(n0, n1)) >= 0.985):
+                        continue
                 edges_data.extend([e.a.x(), e.a.y(), e.a.z(),
                                    e.b.x(), e.b.y(), e.b.z()])
                 continue
