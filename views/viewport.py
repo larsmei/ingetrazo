@@ -9415,7 +9415,9 @@ class Viewport(QOpenGLWidget):
         group = self.scene.edit_group
         if group is None:
             return None
-        if not group.mesh.vertices and not getattr(group, "children", None):
+        from core.reference_mesh import is_reference
+        if (not group.mesh.vertices and not getattr(group, "children", None)
+                and not is_reference(group.mesh)):
             return None     # nothing to wrap
         # A CONTAINER's own mesh is usually empty — its geometry is in its
         # children — so testing that mesh alone left you inside a group with
@@ -15297,16 +15299,21 @@ class Viewport(QOpenGLWidget):
             # A lazy mesh still unbuilt was never edited (an edit builds
             # it): its cached points stand, and asking for its vertices
             # would build it -- the box over a big model built them all.
+            # A dense import keeps its points on ``_reference`` and has
+            # no vertices; skipping it drew no selection box at all.
             lazy = type(mesh) is DeferredMesh
-            if not lazy and not mesh.vertices:
+            ref = mesh.__dict__.get("_reference")
+            if not lazy and not mesh.vertices and ref is None:
                 continue
+            npos = (len(ref.positions) if ref is not None and not mesh.vertices
+                    else len(mesh.vertices))
             hit = store.get(id(mesh))
             if hit is None:
                 continue
             serial, arr = hit
             if (id(mesh) in editing
                     or getattr(mesh, "_mut_serial", None) != serial
-                    or (not lazy and len(arr) != len(mesh.vertices))):
+                    or (not lazy and len(arr) != npos)):
                 del store[id(mesh)]
                 continue
             valid[id(mesh)] = arr

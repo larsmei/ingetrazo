@@ -23,8 +23,10 @@ import numpy as np
 
 from formats import glb as glb_format
 
-#: See the module docstring. Small files stay on the historical importer.
-REFERENCE_TRIANGLES = 20_000
+#: Expanded triangles at or under this stay one editable welded group, as
+#: before. Above it a prototype is a full-fidelity reference: every triangle
+#: is drawn, and it is not editable until Make editable is asked for.
+REFERENCE_TRIANGLES = 10_000
 
 
 def _route(n_unique: int, n_expanded: int) -> str:

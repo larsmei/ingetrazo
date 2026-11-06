@@ -311,10 +311,110 @@ def _edge_json(e) -> dict:
     return entry
 
 
+def _scene_has_reference(scene) -> bool:
+    """Whether any mesh is a dense-import reference (arrays, no faces)."""
+    from core.reference_mesh import is_reference
+    mesh = scene.mesh if hasattr(scene, "mesh") else scene
+    if is_reference(mesh):
+        return True
+    stack = list(getattr(scene, "groups", None) or ())
+    while stack:
+        g = stack.pop()
+        if is_reference(getattr(g, "mesh", None)):
+            return True
+        stack.extend(getattr(g, "children", None) or ())
+    return False
+
+
+def _reference_json(mesh, sink) -> dict:
+    """A dense import, as arrays. A binary block when ``sink`` is the
+    document's geometry dict; nested lists otherwise (small tests)."""
+    import numpy as np
+    ref = mesh.__dict__["_reference"]
+    pos = np.ascontiguousarray(ref.positions, dtype=np.float32)
+    tris = np.ascontiguousarray(ref.triangles, dtype=np.int32)
+    if not np.isfinite(pos).all():
+        raise NonFiniteDocumentError("geometry")
+    if sink is None:
+        block = {"positions": pos.reshape(-1).tolist(),
+                 "triangles": tris.reshape(-1).tolist(),
+                 "npos": int(len(pos)), "ntri": int(len(tris))}
+        if ref.colors is not None:
+            block["colors"] = np.asarray(ref.colors, np.float32).reshape(-1).tolist()
+        if ref.texture and ref.uvs is not None:
+            block["texture"] = ref.texture
+            block["uvs"] = np.asarray(ref.uvs, np.float32).reshape(-1).tolist()
+        return {"reference": block}
+    arrays = {"pos": pos, "tris": tris}
+    if ref.colors is not None:
+        arrays["colors"] = np.ascontiguousarray(ref.colors, dtype=np.float32)
+    if ref.texture and ref.uvs is not None:
+        arrays["uvs"] = np.ascontiguousarray(ref.uvs, dtype=np.float32)
+    meta = _write_geometry(arrays, [], [], sink)
+    if ref.texture:
+        meta["texture"] = ref.texture
+    return {"reference": meta}
+
+
+def _load_reference(mesh, meta, geom) -> None:
+    """The inverse of :func:`_reference_json`: arrays back, still no faces."""
+    import numpy as np
+    from core.reference_mesh import ReferenceMesh, attach, feature_edges
+    if "member" in meta:
+        blob = geom.get(meta["member"])
+        if blob is None:
+            raise ValueError("missing reference geometry")
+        arrays = _blob_arrays(meta, blob)
+        pos = np.asarray(arrays["pos"], np.float32)
+        tris = np.asarray(arrays["tris"], np.int32)
+        colors = (None if "colors" not in arrays
+                  else np.asarray(arrays["colors"], np.float32))
+        uvs = None if "uvs" not in arrays else np.asarray(arrays["uvs"], np.float32)
+        tex = meta.get("texture")
+    else:
+        npos, ntri = int(meta["npos"]), int(meta["ntri"])
+        pos = np.asarray(meta["positions"], np.float32).reshape(npos, 3)
+        tris = np.asarray(meta["triangles"], np.int32).reshape(ntri, 3)
+        colors = (None if "colors" not in meta
+                  else np.asarray(meta["colors"], np.float32).reshape(ntri, 3))
+        uvs = (None if "uvs" not in meta
+               else np.asarray(meta["uvs"], np.float32).reshape(ntri, 3, 2))
+        tex = meta.get("texture")
+    attach(mesh, ReferenceMesh(
+        pos, tris, colors, tex, uvs, feature_edges(pos, tris)))
+
+
+def _blob_arrays(meta, blob: bytes) -> dict:
+    """Arrays of a geometry block, without the face-soup requirements of
+    :func:`_geometry_arrays` (a reference stores positions and triangles)."""
+    import numpy as np
+    layout = meta.get("arrays") if isinstance(meta, dict) else None
+    if not isinstance(layout, dict):
+        raise ValueError("damaged reference geometry")
+    out = {}
+    for name, spec in layout.items():
+        dtype, shape, offset = spec
+        if dtype not in _GEOM_DTYPES:
+            raise ValueError(f"damaged reference geometry ({name})")
+        shape = tuple(int(n) for n in shape)
+        offset = int(offset)
+        count = 1
+        for n in shape:
+            count *= n
+        out[name] = np.array(np.frombuffer(
+            blob, dtype=dtype, count=count, offset=offset).reshape(shape))
+    return out
+
+
 def _mesh_json(mesh, geom_sink=None) -> dict:
     """The mesh block. With a ``geom_sink`` (a large document) a big mesh
     goes to a binary block in the sink and the JSON keeps only its
     reference and face-attribute table (format 3)."""
+    from core.reference_mesh import is_reference
+    if is_reference(mesh):
+        # Full triangles, not a simplified face soup. Promoting on save
+        # turned a scan into an unrecognisable cluster.
+        return _reference_json(mesh, geom_sink)
     from core.lazy_mesh import plan_of
     plan = plan_of(mesh)
     if plan is not None and geom_sink is not None and _bulk_sized(
@@ -609,17 +709,14 @@ def save_scene(scene, path: Path) -> dict:
     """Write ``scene`` to ``path``. Returns ``{"embedded", "missing"}``: how
     many texture images were packed into the document, and how many could not
     be read (those keep pointing at their original path)."""
-    # A dense GLB import draws from arrays. The document stores faces, so
-    # those arrays are promoted (clustered, coplanar-merged) once, here.
-    if hasattr(scene, "groups"):
-        from core.reference_mesh import promote_scene
-        promote_scene(scene)
     # Accept a Scene or a bare Mesh (the M1 read-compat path feeds a Mesh).
     mesh = scene.mesh if hasattr(scene, "mesh") else scene
     # Decided BEFORE anything is serialized: a large document writes its
     # big meshes as binary blocks (format 3) and never builds their JSON.
+    # A dense GLB reference has no faces yet, so the element count misses
+    # it — it still needs a binary block, or the triangles become JSON.
     large = _live_element_count(scene) > _LARGE_DOCUMENT
-    geom: dict | None = {} if large else None
+    geom: dict | None = {} if large or _scene_has_reference(scene) else None
     payload = _mesh_json(mesh, geom)
     groups = getattr(scene, "groups", None)
     kept = getattr(scene, "kept_components", None)
@@ -1581,6 +1678,9 @@ def _load_mesh(mesh, payload, geom=None) -> None:
     groups take the plain walk (the bulk pass's fixed cost loses there).
     A format-3 block (``"geom"``) is read from ``geom``, the document's
     binary members."""
+    if isinstance(payload.get("reference"), dict):
+        _load_reference(mesh, payload["reference"], geom or {})
+        return
     import numpy as np
     import core.mesh as _mesh_mod
     from core.topology import _maximal_holes

@@ -875,6 +875,10 @@ def _local_points(mesh):
             pos = lazy_mesh.weld(np.asarray(s["pos"], dtype=np.float64),
                                  s.get("sequential", False))[0]
         return np.array(pos, dtype=np.float64) if len(pos) else None
+    ref = mesh.__dict__.get("_reference")
+    if ref is not None and not mesh.vertices:
+        pos = np.asarray(ref.positions, dtype=np.float64)
+        return pos if len(pos) else None
     verts = mesh.vertices
     if not verts:
         return None

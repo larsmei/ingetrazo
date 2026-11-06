@@ -4,6 +4,18 @@ All notable changes to IngeTrazo are documented here.
 Format inspired by [Keep a Changelog](https://keepachangelog.com); versions
 follow [SemVer](https://semver.org).
 
+## [0.6.2] — 2026-11-06
+
+### Corregido
+
+- **Los GLB grandes se ven como el archivo.** Por encima de 10 000
+  triángulos el modelo sigue siendo una referencia con todos sus
+  triángulos: ya no se simplifica al guardar ni al importar. No es
+  editable hasta que se pide con el clic derecho ▸ Editierbar machen /
+  Make editable (por encima de 40 000 triángulos pregunta antes, y
+  entonces construye una cara por triángulo, sin agrupar vértices).
+  La caja de selección vuelve a envolver el modelo.
+
 ## [0.6.1] — 2026-11-06
 
 ### Cambiado
@@ -13,8 +25,7 @@ follow [SemVer](https://semver.org).
   mallas glTF repetidas siguen siendo instancias de componente, y un
   prototipo más denso se dibuja desde arrays (solo pliegues y bordes; las
   costuras coplanares no entran en el imán). El análisis corre fuera del
-  hilo de la interfaz. Al guardar en .igz se construye una copia editable
-  simplificada. Los archivos por debajo del umbral se importan como antes.
+  hilo de la interfaz. Los archivos por debajo del umbral se importan como antes.
 
 ## [0.6.0] — 2026-11-01
 

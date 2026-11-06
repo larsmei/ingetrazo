@@ -195,3 +195,56 @@ def test_reference_chunk_draws_triangles_but_not_every_seam():
     assert n_edges == 8
     assert len(entry["faces"]) == 1
     assert entry["tri_ent"].shape == (ref.triangle_count,)
+
+
+def test_selecting_a_reference_uses_its_real_box(tmp_path, monkeypatch):
+    """The active cue is the model's box, not a point at the origin."""
+    monkeypatch.setattr(glb_fast, "REFERENCE_TRIANGLES", 8)
+    path = tmp_path / "dense.glb"
+    pos, tris, _ = weld_triangles(_grid(3))
+    _write_glb(path, pos, tris.reshape(-1), [(0, 0, 0), (10, 0, 0)])
+    scene = Scene()
+    glb_fast.load_into(scene, path)
+    scene.selection.add(scene.groups[0])
+    lo, hi = scene.selection_bounds()
+    assert lo is not None
+    assert hi.x() - lo.x() == pytest.approx(13.0, abs=1e-2)
+    # The grid is written flat and arrives in the XZ plane (Z-up).
+    assert hi.z() - lo.z() == pytest.approx(3.0, abs=1e-2)
+
+
+def test_saving_a_reference_keeps_every_triangle(tmp_path, monkeypatch):
+    monkeypatch.setattr(glb_fast, "REFERENCE_TRIANGLES", 8)
+    path = tmp_path / "dense.glb"
+    pos, tris, _ = weld_triangles(_grid(3))
+    _write_glb(path, pos, tris.reshape(-1), [(0, 0, 0)])
+    scene = Scene()
+    glb_fast.load_into(scene, path)
+    from formats import igz
+    out = tmp_path / "kept.igz"
+    igz.save_scene(scene, out)
+    mesh = scene.groups[0].mesh
+    assert not mesh.faces
+    assert mesh._reference.triangle_count == 18
+    again = Scene()
+    igz.load_into(again, out)
+    loaded = again.groups[0].mesh
+    assert not loaded.faces
+    assert loaded._reference.triangle_count == 18
+
+
+def test_make_editable_builds_the_real_triangles_not_a_cluster():
+    from core.reference_mesh import MakeEditable, attach, from_batches
+    corners = _grid(3)
+    ref = from_batches([(corners, None, (None, (0.2, 0.4, 0.9, 1), None))])
+    mesh = Mesh()
+    attach(mesh, ref)
+    scene = Scene()
+    cmd = MakeEditable([mesh])
+    cmd.do(scene)
+    assert len(mesh.faces) == 18
+    assert "_reference" not in mesh.__dict__
+    cmd.undo(scene)
+    assert not mesh.faces
+    assert mesh._reference.triangle_count == 18
+

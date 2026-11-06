@@ -381,8 +381,9 @@ def promote_mesh(mesh, *, max_triangles: int = PROMOTE_MAX_TRIANGLES,
 
 
 def promote_scene(scene, **kwargs) -> int:
-    """:func:`promote_mesh` on every placement. Used when saving, because
-    ``.igz`` stores faces, not the display arrays."""
+    """:func:`promote_mesh` on every placement. Not called on save: a
+    reference stays a reference (full triangles) until
+    :class:`MakeEditable`."""
     if scene is None or not hasattr(scene, "groups"):
         return 0
     from core.group import iter_placements
@@ -395,6 +396,67 @@ def promote_scene(scene, **kwargs) -> int:
                 continue
             done.add(id(mesh))
             total += promote_mesh(mesh, **kwargs)
+    return total
+
+
+#: Above this, Make editable asks first. Below it the click is the ask:
+#: the faces are the real triangles, not a clustered stand-in.
+EDITABLE_WARN = 40_000
+
+
+class MakeEditable:
+    """Turn reference meshes into real faces, one triangle each, and undo
+    back to the arrays. No clustering: the shape on screen does not change."""
+
+    keeps_paint = False
+    keeps_groups = False
+
+    def __init__(self, meshes) -> None:
+        seen = []
+        have = set()
+        for mesh in meshes:
+            if mesh is None or id(mesh) in have or not is_reference(mesh):
+                continue
+            have.add(id(mesh))
+            seen.append(mesh)
+        self._meshes = seen
+        self._refs = None
+
+    def do(self, scene) -> None:
+        if self._refs is None:
+            self._refs = [m.__dict__.get("_reference") for m in self._meshes]
+        for mesh in self._meshes:
+            if is_reference(mesh):
+                promote_mesh(mesh, max_triangles=1 << 30, merge=False)
+        scene.version += 1
+
+    def undo(self, scene) -> None:
+        for mesh, ref in zip(self._meshes, self._refs or ()):
+            mesh.clear()
+            if ref is not None:
+                attach(mesh, ref)
+        scene.version += 1
+
+
+def reference_triangle_count(scene) -> int:
+    """Unique reference triangles in ``scene`` (shared meshes once)."""
+    if scene is None or not hasattr(scene, "groups"):
+        return 0
+    from core.group import iter_placements
+    seen: set = set()
+    total = 0
+    meshes = []
+    if is_reference(getattr(scene, "mesh", None)):
+        meshes.append(scene.mesh)
+    for g in scene.groups:
+        for place, _m in iter_placements(g):
+            if is_reference(place.mesh):
+                meshes.append(place.mesh)
+    for mesh in meshes:
+        if id(mesh) in seen:
+            continue
+        seen.add(id(mesh))
+        total += mesh.__dict__["_reference"].triangle_count
     return total
 
 

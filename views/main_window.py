@@ -4131,6 +4131,47 @@ class MainWindow(QMainWindow):
             n=len(pieces)), 5000)
         self.viewport.update()
 
+    def _selection_has_reference(self, groups) -> bool:
+        from core.group import iter_placements
+        from core.reference_mesh import is_reference
+        for g in groups:
+            for place, _m in iter_placements(g):
+                if is_reference(place.mesh):
+                    return True
+        return False
+
+    def _on_make_editable(self) -> None:
+        """The explicit switch: a dense import stays a full reference until
+        this. Faces are the real triangles — nothing is clustered."""
+        from core.group import iter_placements
+        from core.reference_mesh import (EDITABLE_WARN, MakeEditable,
+                                         is_reference)
+        scene = self.viewport.scene
+        meshes = []
+        seen = set()
+        for g in [e for e in scene.selection if isinstance(e, Group)]:
+            for place, _m in iter_placements(g):
+                mesh = place.mesh
+                if is_reference(mesh) and id(mesh) not in seen:
+                    seen.add(id(mesh))
+                    meshes.append(mesh)
+        if not meshes:
+            return
+        n = sum(m.__dict__["_reference"].triangle_count for m in meshes)
+        if n > EDITABLE_WARN:
+            answer = QMessageBox.question(
+                self, tr("Make editable"),
+                tr("This reference has {n:,} triangles and is drawn in "
+                   "full, without simplifying. Making it editable builds "
+                   "one face per triangle and can make IngeTrazo slow. "
+                   "Continue?", n=n))
+            if answer != QMessageBox.Yes:
+                return
+        self.viewport.history.execute(MakeEditable(meshes))
+        self.statusBar().showMessage(
+            tr("Editable: {n:,} triangles.", n=n), 5000)
+        self.viewport.update()
+
     @_repeatable("Explode Group")
     def _on_explode_group(self) -> None:
         # Inside an open group what comes out stays in it, one level up
@@ -4879,6 +4920,8 @@ class MainWindow(QMainWindow):
                 one = groups[0]
                 menu.addAction(tr("Edit Group"),
                                lambda: self.viewport.begin_group_edit(one))
+            if self._selection_has_reference(groups):
+                menu.addAction(tr("Make editable"), self._on_make_editable)
             text = self._selected_text3d()
             if text is not None:
                 from core.text3d import text_is_pristine
@@ -7614,7 +7657,15 @@ class MainWindow(QMainWindow):
         self.viewport.update()
         self._import_name = path.name
         self._update_title()
-        self._report_import(path.name, moved.get("offset"))
+        extra = ""
+        from core.reference_mesh import reference_triangle_count
+        nref = reference_triangle_count(self.viewport.scene)
+        if nref:
+            extra = tr(
+                " — reference, {n:,} triangles, not editable. "
+                "Right-click → Make editable.",
+                n=nref)
+        self._report_import(path.name, moved.get("offset"), extra)
 
     def _parse_glb_threaded(self, path, cb):
         """:func:`formats.glb_fast.prepare_glb` on a worker. ``(payload, exc)``."""
@@ -7891,15 +7942,15 @@ class MainWindow(QMainWindow):
             "moved near the origin (survey coordinates); offset "
             "{x:,.0f}, {y:,.0f} m", x=offset[0], y=offset[1])
 
-    def _report_import(self, name: str, offset=None) -> None:
+    def _report_import(self, name: str, offset=None, extra: str = "") -> None:
         """«Imported name», plus the offset when the file was moved near the
         origin — then the model is framed, since it now sits elsewhere than
         its coordinates say."""
         if offset:
             self._on_zoom_extents()
         self.statusBar().showMessage(
-            tr("Imported {name}", name=name) + self._survey_note(offset),
-            8000 if offset else 3000)
+            tr("Imported {name}", name=name) + extra + self._survey_note(offset),
+            12000 if (offset or extra) else 3000)
 
     def _on_import_obj(self) -> None:
         path_str, _ = file_dialogs.getOpenFileName(
