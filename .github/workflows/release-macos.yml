@@ -13,6 +13,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:        # exercise the build without a tag (artifact only)
+    inputs:
+      tag:
+        description: Release tag to attach the .dmg to (empty = artifact only)
+        required: false
+        default: ""
 
 permissions:
   contents: write           # to upload the .dmg to the release
@@ -29,7 +34,7 @@ jobs:
       fail-fast: false            # one Mac failing never holds the other
       matrix:
         include:
-          - runner: macos-14        # Apple Silicon
+          - runner: macos-15        # Apple Silicon (macos-14 retired 2026-11-02)
             arch: arm64
           - runner: macos-15-intel  # Intel; the .dmg is named by uname -m
             arch: x86_64
@@ -92,10 +97,11 @@ jobs:
           path: dist/*.dmg
 
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.tag }}
         run: |
-          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
-            || gh release create "${GITHUB_REF_NAME}" --title "IngeTrazo ${GITHUB_REF_NAME}" --generate-notes
-          gh release upload "${GITHUB_REF_NAME}" dist/*.dmg --clobber
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 \
+            || gh release create "$RELEASE_TAG" --title "IngeTrazo ${RELEASE_TAG}" --generate-notes
+          gh release upload "$RELEASE_TAG" dist/*.dmg --clobber
