@@ -18,6 +18,15 @@ on:
         description: Release tag to attach the .dmg to (empty = artifact only)
         required: false
         default: ""
+      only:
+        description: Which architecture to build
+        required: false
+        default: both
+        type: choice
+        options:
+          - both
+          - arm64
+          - x86_64
 
 permissions:
   contents: write           # to upload the .dmg to the release
@@ -30,11 +39,12 @@ jobs:
   dmg:
     name: .app + .dmg (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'both' || inputs.only == matrix.arch
     strategy:
       fail-fast: false            # one Mac failing never holds the other
       matrix:
         include:
-          - runner: macos-15        # Apple Silicon (macos-14 retired 2026-11-02)
+          - runner: macos-latest    # Apple Silicon (macos-14 retired 2026-11-02; macos-15 had no capacity)
             arch: arm64
           - runner: macos-15-intel  # Intel; the .dmg is named by uname -m
             arch: x86_64
